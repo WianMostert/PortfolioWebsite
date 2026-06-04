@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useState, type CSSProperties, type FormEvent } from 'react'
 import { Link, NavLink, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import { AnimatePresence, motion, useReducedMotion, useScroll, useSpring } from 'framer-motion'
 import {
@@ -13,13 +13,29 @@ import {
   Sparkles,
   UserRound,
   BriefcaseBusiness,
+  Download,
+  Eye,
+  Lock,
+  RotateCcw,
+  Save,
+  ShieldCheck,
+  Upload,
 } from 'lucide-react'
 import './App.css'
-import { findProject, projects, type Project } from './data/projects'
-
-const channelUrl = 'https://www.youtube.com/@WianMostertDirector'
-const linkedInUrl = 'https://www.linkedin.com/in/wian-mostert-594820253/'
-const profileImage = '/wian-headshot.png'
+import type { Project } from './data/projects'
+import {
+  adminSessionKey,
+  defaultAdminPasswordHash,
+  getConfiguredProfile,
+  getConfiguredProjects,
+  loadOverrides,
+  normalizeImageUrl,
+  resetOverrides,
+  saveOverrides,
+  type PortfolioOverrides,
+  type ProjectOverride,
+  type SiteProfile,
+} from './config/portfolio'
 
 const fadeIn = {
   initial: { opacity: 0, y: 28 },
@@ -40,7 +56,89 @@ const themeStyle = (project: Project) =>
     '--page-body': project.theme.bodyFont,
   }) as CSSProperties
 
-function SiteHeader() {
+const hashPassword = async (value: string) => {
+  const data = new TextEncoder().encode(value)
+  const buffer = await crypto.subtle.digest('SHA-256', data)
+  return Array.from(new Uint8Array(buffer))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+const compressImageFile = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const image = new Image()
+
+    image.addEventListener('load', () => {
+      URL.revokeObjectURL(url)
+      const maxSize = 1600
+      const scale = Math.min(1, maxSize / Math.max(image.naturalWidth, image.naturalHeight))
+      const width = Math.max(1, Math.round(image.naturalWidth * scale))
+      const height = Math.max(1, Math.round(image.naturalHeight * scale))
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const context = canvas.getContext('2d')
+
+      if (!context) {
+        reject(new Error('This browser could not prepare the image.'))
+        return
+      }
+
+      context.drawImage(image, 0, 0, width, height)
+      resolve(canvas.toDataURL('image/jpeg', 0.82))
+    })
+
+    image.addEventListener('error', () => {
+      URL.revokeObjectURL(url)
+      reject(new Error('That image could not be loaded.'))
+    })
+
+    image.src = url
+  })
+
+const imageFileToDataUrl = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    if (!file.type.startsWith('image/')) {
+      reject(new Error('Please choose an image file.'))
+      return
+    }
+
+    if (!file.type.includes('svg') && !file.type.includes('gif')) {
+      compressImageFile(file).then(resolve).catch(reject)
+      return
+    }
+
+    const reader = new FileReader()
+    reader.addEventListener('load', () => resolve(String(reader.result)))
+    reader.addEventListener('error', () => reject(reader.error ?? new Error('Image upload failed.')))
+    reader.readAsDataURL(file)
+  })
+
+function usePortfolioConfig() {
+  const [overrides, setOverrides] = useState<PortfolioOverrides>(() => loadOverrides())
+
+  useEffect(() => {
+    const refresh = () => setOverrides(loadOverrides())
+    window.addEventListener('portfolio-config-updated', refresh)
+    window.addEventListener('storage', refresh)
+    return () => {
+      window.removeEventListener('portfolio-config-updated', refresh)
+      window.removeEventListener('storage', refresh)
+    }
+  }, [])
+
+  return useMemo(
+    () => ({
+      overrides,
+      profile: getConfiguredProfile(overrides),
+      configuredProjects: getConfiguredProjects(overrides),
+    }),
+    [overrides],
+  )
+}
+
+function SiteHeader({ profile }: { profile: SiteProfile }) {
   return (
     <header className="site-header" aria-label="Main navigation">
       <Link className="brand" to="/" aria-label="Wian Mostert portfolio home">
@@ -52,11 +150,11 @@ function SiteHeader() {
       </Link>
       <nav className="nav-links">
         <NavLink to="/">Work</NavLink>
-        <a href={linkedInUrl} target="_blank" rel="noreferrer">
+        <a href={profile.linkedInUrl} target="_blank" rel="noreferrer">
           LinkedIn
           <ArrowUpRight aria-hidden="true" />
         </a>
-        <a href={channelUrl} target="_blank" rel="noreferrer">
+        <a href={profile.youtubeUrl} target="_blank" rel="noreferrer">
           YouTube
           <ArrowUpRight aria-hidden="true" />
         </a>
@@ -134,8 +232,8 @@ function PageLoadSlate() {
   )
 }
 
-function FilmMarquee() {
-  const items = projects.flatMap((project) => [project.shortTitle, project.role])
+function FilmMarquee({ configuredProjects }: { configuredProjects: Project[] }) {
+  const items = configuredProjects.flatMap((project) => [project.shortTitle, project.role])
 
   return (
     <section className="film-marquee" aria-label="Film disciplines and projects">
@@ -169,7 +267,7 @@ function ScrollToTop() {
   return null
 }
 
-function HomePage() {
+function HomePage({ profile, configuredProjects }: { profile: SiteProfile; configuredProjects: Project[] }) {
   const reduceMotion = useReducedMotion()
 
   return (
@@ -187,17 +285,14 @@ function HomePage() {
           transition={{ duration: 0.7, ease: 'easeOut' }}
         >
           <p className="section-label">Director / Cinematographer / Editor</p>
-          <h1>South African short films shaped by memory, pressure, and genre.</h1>
-          <p className="hero-intro">
-            Wian Mostert builds cinematic shorts across poetic essay film, western chaos,
-            sci-fi tension, psychological drama, and action-driven experiments.
-          </p>
+          <h1>{profile.headline}</h1>
+          <p className="hero-intro">{profile.intro}</p>
           <div className="hero-actions">
-            <a className="primary-action" href={channelUrl} target="_blank" rel="noreferrer">
+            <a className="primary-action" href={profile.youtubeUrl} target="_blank" rel="noreferrer">
               <Play aria-hidden="true" />
               Watch the channel
             </a>
-            <a className="secondary-action" href={linkedInUrl} target="_blank" rel="noreferrer">
+            <a className="secondary-action" href={profile.linkedInUrl} target="_blank" rel="noreferrer">
               <BriefcaseBusiness aria-hidden="true" />
               LinkedIn
             </a>
@@ -214,7 +309,7 @@ function HomePage() {
         >
           <div className="portrait-panel">
             <motion.img
-              src={profileImage}
+              src={profile.profileImage}
               alt="Wian Mostert"
               animate={
                 reduceMotion
@@ -232,14 +327,14 @@ function HomePage() {
             </div>
           </div>
           <div className="portrait-reel" aria-label="Project stills">
-            {projects.slice(0, 4).map((project) => (
+            {configuredProjects.slice(0, 4).map((project) => (
               <img src={project.thumbnail} alt="" key={project.id} />
             ))}
           </div>
         </motion.div>
       </section>
 
-      <FilmMarquee />
+      <FilmMarquee configuredProjects={configuredProjects} />
 
       <section className="profile-band" aria-label="Director profile" id="profile">
         <motion.div
@@ -250,21 +345,16 @@ function HomePage() {
           transition={{ duration: 0.55 }}
         >
           <Clapperboard aria-hidden="true" />
-          <p>
-            Director, cinematographer, and editor working from South Africa with a focus
-            on short-form cinematic storytelling. This portfolio is organised like a
-            slate: each film opens into its own visual world, with a palette and type
-            system drawn from the project&apos;s subject, thumbnail, and genre language.
-          </p>
+          <p>{profile.statement}</p>
         </motion.div>
         <div className="profile-facts" aria-label="Portfolio facts">
           <span>
             <Camera aria-hidden="true" />
-            Director / Cinematographer / Editor
+            {profile.roles}
           </span>
           <span>
             <MapPin aria-hidden="true" />
-            South Africa
+            {profile.location}
           </span>
           <span>
             <BriefcaseBusiness aria-hidden="true" />
@@ -276,15 +366,11 @@ function HomePage() {
       <section className="director-strip" aria-label="About Wian">
         <div className="about-card">
           <UserRound aria-hidden="true" />
-          <h2>Built around the person behind the camera.</h2>
-          <p>
-            The homepage now gives visitors a stronger sense of Wian before they enter
-            the individual film pages, with a profile image area, LinkedIn pathway,
-            role language, and a reel of project stills.
-          </p>
+          <h2>{profile.aboutTitle}</h2>
+          <p>{profile.aboutBody}</p>
         </div>
         <div className="still-stack">
-          {projects.slice(4, 9).map((project) => (
+          {configuredProjects.slice(4, 9).map((project) => (
             <Link to={`/films/${project.slug}`} key={project.id}>
               <img src={project.thumbnail} alt="" loading="lazy" />
               <span>{project.shortTitle}</span>
@@ -299,7 +385,7 @@ function HomePage() {
           <h2>Each page has its own visual language.</h2>
         </div>
         <div className="project-grid">
-          {projects.map((project, index) => (
+          {configuredProjects.map((project, index) => (
             <ProjectCard project={project} index={index} key={project.id} />
           ))}
         </div>
@@ -342,16 +428,16 @@ function ProjectCard({ project, index }: { project: Project; index: number }) {
   )
 }
 
-function ProjectPage() {
+function ProjectPage({ configuredProjects }: { configuredProjects: Project[] }) {
   const { slug } = useParams()
-  const project = findProject(slug)
+  const project = configuredProjects.find((item) => item.slug === slug)
   const reduceMotion = useReducedMotion()
 
   if (!project) {
     return <NotFound />
   }
 
-  const related = projects.filter((item) => item.id !== project.id).slice(0, 3)
+  const related = configuredProjects.filter((item) => item.id !== project.id).slice(0, 3)
 
   return (
     <motion.main
@@ -484,18 +570,471 @@ function NotFound() {
   )
 }
 
+function AdminPage({
+  configuredProjects,
+  overrides,
+}: {
+  configuredProjects: Project[]
+  overrides: PortfolioOverrides
+}) {
+  const [isUnlocked, setIsUnlocked] = useState(
+    () => window.sessionStorage.getItem(adminSessionKey) === 'true',
+  )
+  const [password, setPassword] = useState('')
+  const [loginError, setLoginError] = useState('')
+  const [adminNotice, setAdminNotice] = useState('')
+  const [draft, setDraft] = useState<PortfolioOverrides>(overrides)
+  const [activeSlug, setActiveSlug] = useState(configuredProjects[0]?.slug ?? '')
+  const draftProfile = useMemo(() => getConfiguredProfile(draft), [draft])
+  const draftProjects = useMemo(() => getConfiguredProjects(draft), [draft])
+  const activeProject = draftProjects.find((project) => project.slug === activeSlug) ?? draftProjects[0]
+
+  const updateProfile = (key: keyof SiteProfile, value: string) => {
+    setDraft((current) => ({
+      ...current,
+      profile: {
+        ...current.profile,
+        [key]: value,
+      },
+    }))
+  }
+
+  const updateProject = (slug: string, value: ProjectOverride) => {
+    setDraft((current) => ({
+      ...current,
+      projects: {
+        ...current.projects,
+        [slug]: {
+          ...current.projects?.[slug],
+          ...value,
+        },
+      },
+    }))
+  }
+
+  const updateProjectTheme = (slug: string, key: keyof Project['theme'], value: string) => {
+    setDraft((current) => {
+      const existing = current.projects?.[slug]
+      return {
+        ...current,
+        projects: {
+          ...current.projects,
+          [slug]: {
+            ...existing,
+            theme: {
+              ...existing?.theme,
+              [key]: value,
+            },
+          },
+        },
+      }
+    })
+  }
+
+  const login = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setLoginError('')
+
+    const hash = await hashPassword(password)
+    if (hash === defaultAdminPasswordHash) {
+      window.sessionStorage.setItem(adminSessionKey, 'true')
+      setIsUnlocked(true)
+      setPassword('')
+      return
+    }
+
+    setLoginError('Password did not match. The default local password is configurable through VITE_ADMIN_PASSWORD_HASH.')
+  }
+
+  const save = () => {
+    try {
+      saveOverrides(draft)
+      setAdminNotice('Saved locally. Preview will use these settings.')
+      return true
+    } catch {
+      setAdminNotice('Could not save. The uploaded images may still be too large for browser storage.')
+      return false
+    }
+  }
+
+  const preview = () => {
+    if (save()) {
+      window.open(import.meta.env.BASE_URL, '_blank')
+    }
+  }
+
+  const exportConfig = () => {
+    const blob = new Blob([JSON.stringify(draft, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'wian-portfolio-config.json'
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const importConfig = async (file: File | undefined) => {
+    if (!file) {
+      return
+    }
+
+    try {
+      const text = await file.text()
+      setDraft(JSON.parse(text) as PortfolioOverrides)
+      setAdminNotice('Config imported into the draft. Click Save local to apply it.')
+    } catch {
+      setAdminNotice('That JSON file could not be imported.')
+    }
+  }
+
+  const uploadProfileImage = async (file: File | undefined) => {
+    if (!file) {
+      return
+    }
+
+    try {
+      updateProfile('profileImage', await imageFileToDataUrl(file))
+      setAdminNotice('Profile image loaded into the draft. Click Preview or Save local to keep it.')
+    } catch (error) {
+      setAdminNotice(error instanceof Error ? error.message : 'Image upload failed.')
+    }
+  }
+
+  const uploadProjectImage = async (slug: string, file: File | undefined) => {
+    if (!file) {
+      return
+    }
+
+    try {
+      updateProject(slug, { thumbnail: await imageFileToDataUrl(file) })
+      setAdminNotice('Film image loaded into the draft. Click Preview or Save local to keep it.')
+    } catch (error) {
+      setAdminNotice(error instanceof Error ? error.message : 'Image upload failed.')
+    }
+  }
+
+  const clearProjectThumbnail = (slug: string) => {
+    updateProject(slug, { thumbnail: '' })
+    setAdminNotice('Custom film image cleared. This film will use the default YouTube thumbnail after saving.')
+  }
+
+  const updateProfileImageUrl = (value: string) => {
+    const normalized = normalizeImageUrl(value)
+    updateProfile('profileImage', normalized)
+    if (normalized !== value.trim() && normalized.includes('drive.google.com')) {
+      setAdminNotice('Google Drive profile image link converted to a usable image URL.')
+    }
+  }
+
+  const updateProjectThumbnailUrl = (slug: string, value: string) => {
+    const normalized = normalizeImageUrl(value)
+    updateProject(slug, { thumbnail: normalized })
+    if (normalized !== value.trim() && normalized.includes('drive.google.com')) {
+      setAdminNotice('Google Drive thumbnail link converted to a usable image URL.')
+    }
+  }
+
+  if (!isUnlocked) {
+    return (
+      <motion.main className="admin-page admin-login" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+        <section className="admin-panel login-panel">
+          <Lock aria-hidden="true" />
+          <p className="section-label">Private controls</p>
+          <h1>Portfolio admin</h1>
+          <p>
+            This unlocks local editing controls for the static site. It does not expose private data,
+            store secrets, or write to GitHub from the browser.
+          </p>
+          <form onSubmit={login} className="admin-form">
+            <label>
+              Password
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete="current-password"
+              />
+            </label>
+            {loginError && <span className="admin-error">{loginError}</span>}
+            <button className="primary-action" type="submit">
+              <ShieldCheck aria-hidden="true" />
+              Unlock admin
+            </button>
+          </form>
+        </section>
+      </motion.main>
+    )
+  }
+
+  return (
+    <motion.main className="admin-page" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }}>
+      <section className="admin-hero">
+        <div>
+          <p className="section-label">Configuration</p>
+          <h1>Portfolio control room</h1>
+          <p>
+            Edit the copy, links, profile image, thumbnails, tags, and per-film visual tokens.
+            Preview saves the current draft locally before opening the public site.
+          </p>
+        </div>
+        <div className="admin-actions">
+          <button className="secondary-action" type="button" onClick={preview}>
+            <Eye aria-hidden="true" />
+            Preview
+          </button>
+          <button className="secondary-action" type="button" onClick={exportConfig}>
+            <Download aria-hidden="true" />
+            Export
+          </button>
+          <label className="secondary-action file-action">
+            <Upload aria-hidden="true" />
+            Import
+            <input type="file" accept="application/json" onChange={(event) => importConfig(event.target.files?.[0])} />
+          </label>
+          <button className="secondary-action" type="button" onClick={() => setDraft({})}>
+            <RotateCcw aria-hidden="true" />
+            Clear draft
+          </button>
+          <button className="primary-action" type="button" onClick={save}>
+            <Save aria-hidden="true" />
+            Save local
+          </button>
+        </div>
+        {adminNotice && <p className="admin-notice">{adminNotice}</p>}
+      </section>
+
+      <section className="admin-grid">
+        <div className="admin-panel">
+          <h2>Director profile</h2>
+          <div className="field-grid">
+            <label>
+              Headline
+              <textarea value={draftProfile.headline} onChange={(event) => updateProfile('headline', event.target.value)} />
+            </label>
+            <label>
+              Intro
+              <textarea value={draftProfile.intro} onChange={(event) => updateProfile('intro', event.target.value)} />
+            </label>
+            <label>
+              Statement
+              <textarea value={draftProfile.statement} onChange={(event) => updateProfile('statement', event.target.value)} />
+            </label>
+            <label>
+              About title
+              <input value={draftProfile.aboutTitle} onChange={(event) => updateProfile('aboutTitle', event.target.value)} />
+            </label>
+            <label>
+              About body
+              <textarea value={draftProfile.aboutBody} onChange={(event) => updateProfile('aboutBody', event.target.value)} />
+            </label>
+            <label>
+              Roles
+              <input value={draftProfile.roles} onChange={(event) => updateProfile('roles', event.target.value)} />
+            </label>
+            <label>
+              Location
+              <input value={draftProfile.location} onChange={(event) => updateProfile('location', event.target.value)} />
+            </label>
+            <label>
+              Profile image URL or Google Drive link
+              <input value={draftProfile.profileImage} onChange={(event) => updateProfileImageUrl(event.target.value)} />
+              <span>Paste a public Drive share link; it converts automatically.</span>
+            </label>
+            <label className="upload-field">
+              Upload profile image
+              <input type="file" accept="image/*" onChange={(event) => uploadProfileImage(event.target.files?.[0])} />
+              <span>Compressed and stored locally; it exports with the config.</span>
+            </label>
+            <label>
+              YouTube URL
+              <input value={draftProfile.youtubeUrl} onChange={(event) => updateProfile('youtubeUrl', event.target.value)} />
+            </label>
+            <label>
+              LinkedIn URL
+              <input value={draftProfile.linkedInUrl} onChange={(event) => updateProfile('linkedInUrl', event.target.value)} />
+            </label>
+          </div>
+        </div>
+
+        <div className="admin-panel project-editor">
+          <h2>Film pages</h2>
+          <div className="admin-tabs" role="tablist" aria-label="Film editor">
+            {draftProjects.map((project) => (
+              <button
+                type="button"
+                className={project.slug === activeSlug ? 'active' : ''}
+                onClick={() => setActiveSlug(project.slug)}
+                key={project.slug}
+              >
+                {project.shortTitle}
+              </button>
+            ))}
+          </div>
+
+          {activeProject && (
+            <div className="film-admin-card" style={themeStyle(activeProject)}>
+              <img src={activeProject.thumbnail} alt="" />
+              <div className="field-grid">
+                <label>
+                  Logline
+                  <textarea
+                    value={activeProject.logline}
+                    onChange={(event) => updateProject(activeProject.slug, { logline: event.target.value })}
+                  />
+                </label>
+                <label>
+                  Description
+                  <textarea
+                    value={activeProject.description}
+                    onChange={(event) => updateProject(activeProject.slug, { description: event.target.value })}
+                  />
+                </label>
+                <label>
+                  Role
+                  <input
+                    value={activeProject.role}
+                    onChange={(event) => updateProject(activeProject.slug, { role: event.target.value })}
+                  />
+                </label>
+                <label>
+                  Tags, comma separated
+                  <input
+                    value={activeProject.tags.join(', ')}
+                    onChange={(event) =>
+                      updateProject(activeProject.slug, {
+                        tags: event.target.value
+                          .split(',')
+                          .map((tag) => tag.trim())
+                          .filter(Boolean),
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Custom thumbnail URL or Google Drive link
+                  <input
+                    value={activeProject.thumbnail}
+                    onChange={(event) => updateProjectThumbnailUrl(activeProject.slug, event.target.value)}
+                  />
+                  <span>Leave blank or clear to use the default YouTube thumbnail.</span>
+                </label>
+                <label className="upload-field">
+                  Upload film image
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => uploadProjectImage(activeProject.slug, event.target.files?.[0])}
+                  />
+                  <span>Compressed locally. Clear it to fall back to YouTube.</span>
+                </label>
+                <div className="field-command">
+                  <span>No custom reference needed?</span>
+                  <button className="secondary-action" type="button" onClick={() => clearProjectThumbnail(activeProject.slug)}>
+                    Use YouTube default
+                  </button>
+                </div>
+                <label>
+                  Background
+                  <input
+                    type="color"
+                    value={activeProject.theme.background}
+                    onChange={(event) => updateProjectTheme(activeProject.slug, 'background', event.target.value)}
+                  />
+                </label>
+                <label>
+                  Surface
+                  <input
+                    type="color"
+                    value={activeProject.theme.surface}
+                    onChange={(event) => updateProjectTheme(activeProject.slug, 'surface', event.target.value)}
+                  />
+                </label>
+                <label>
+                  Text
+                  <input
+                    type="color"
+                    value={activeProject.theme.text}
+                    onChange={(event) => updateProjectTheme(activeProject.slug, 'text', event.target.value)}
+                  />
+                </label>
+                <label>
+                  Accent
+                  <input
+                    type="color"
+                    value={activeProject.theme.accent}
+                    onChange={(event) => updateProjectTheme(activeProject.slug, 'accent', event.target.value)}
+                  />
+                </label>
+                <label>
+                  Secondary
+                  <input
+                    type="color"
+                    value={activeProject.theme.secondary}
+                    onChange={(event) => updateProjectTheme(activeProject.slug, 'secondary', event.target.value)}
+                  />
+                </label>
+                <label>
+                  Display font
+                  <input
+                    value={activeProject.theme.displayFont}
+                    onChange={(event) => updateProjectTheme(activeProject.slug, 'displayFont', event.target.value)}
+                  />
+                </label>
+                <label>
+                  Body font
+                  <input
+                    value={activeProject.theme.bodyFont}
+                    onChange={(event) => updateProjectTheme(activeProject.slug, 'bodyFont', event.target.value)}
+                  />
+                </label>
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="admin-panel danger-panel">
+        <div>
+          <h2>Safety model</h2>
+          <p>
+            This is safe for GitHub Pages because it stores only public portfolio settings in the
+            browser. A static website cannot keep a real admin secret or commit changes to GitHub
+            without a backend, so exported JSON should be reviewed before copying into code.
+          </p>
+        </div>
+        <button
+          className="secondary-action"
+          type="button"
+          onClick={() => {
+            resetOverrides()
+            setDraft({})
+          }}
+        >
+          Reset saved local config
+        </button>
+      </section>
+    </motion.main>
+  )
+}
+
 function App() {
+  const { profile, configuredProjects, overrides } = usePortfolioConfig()
+
   return (
     <div className="app-shell">
       <KineticBackdrop />
       <ScrollProgress />
       <PageLoadSlate />
       <ScrollToTop />
-      <SiteHeader />
+      <SiteHeader profile={profile} />
       <AnimatePresence mode="wait">
         <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/films/:slug" element={<ProjectPage />} />
+          <Route path="/" element={<HomePage profile={profile} configuredProjects={configuredProjects} />} />
+          <Route path="/films/:slug" element={<ProjectPage configuredProjects={configuredProjects} />} />
+          <Route
+            path="/admin"
+            element={<AdminPage configuredProjects={configuredProjects} overrides={overrides} />}
+          />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </AnimatePresence>

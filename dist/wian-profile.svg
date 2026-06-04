@@ -1,0 +1,17 @@
+<svg width="1200" height="1500" viewBox="0 0 1200 1500" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="1500" fill="#11100D"/>
+  <rect x="88" y="88" width="1024" height="1324" rx="34" fill="#1A1711" stroke="#E8B753" stroke-opacity=".34" stroke-width="4"/>
+  <path d="M88 1080C250 1016 398 1001 532 1035C684 1074 852 1077 1112 958V1412H88V1080Z" fill="#E8B753" fill-opacity=".16"/>
+  <path d="M356 492C356 354 459 244 599 244C739 244 844 354 844 492C844 629 735 744 599 744C463 744 356 629 356 492Z" fill="#E6D9BF"/>
+  <path d="M333 498C363 347 459 236 603 236C743 236 844 343 870 490C830 422 784 390 733 396C684 402 644 438 594 439C532 440 489 393 432 402C391 408 358 438 333 498Z" fill="#3A2C1E"/>
+  <path d="M302 1110C328 904 442 787 600 787C758 787 872 904 898 1110H302Z" fill="#E6D9BF"/>
+  <path d="M392 1110C410 956 488 875 600 875C712 875 790 956 808 1110H392Z" fill="#15120D"/>
+  <circle cx="479" cy="512" r="26" fill="#17130E"/>
+  <circle cx="721" cy="512" r="26" fill="#17130E"/>
+  <path d="M532 642C569 672 632 673 669 642" stroke="#17130E" stroke-width="18" stroke-linecap="round"/>
+  <path d="M188 1261H1012" stroke="#E8B753" stroke-opacity=".38" stroke-width="3"/>
+  <text x="600" y="1228" fill="#F6EBD2" font-family="Georgia, serif" font-size="86" font-weight="700" text-anchor="middle">Wian Mostert</text>
+  <text x="600" y="1314" fill="#E8B753" font-family="Arial, sans-serif" font-size="34" font-weight="700" letter-spacing="8" text-anchor="middle">DIRECTOR / CINEMATOGRAPHER / EDITOR</text>
+  <circle cx="981" cy="242" r="58" fill="#E8B753"/>
+  <text x="981" y="258" fill="#11100D" font-family="Arial, sans-serif" font-size="34" font-weight="800" text-anchor="middle">WM</text>
+</svg>
